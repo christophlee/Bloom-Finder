@@ -14,75 +14,42 @@ from geopy.exc import GeocoderTimedOut
 from geopy.distance import distance
 from geopy import Point
 
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.ensemble import RandomForestClassifier
+
 import pydeck as pdk
 
 import matplotlib as mpl 
 import matplotlib.pyplot as plt 
 from matplotlib import cm 
 
-#import pyproj
-#import rasterio
-
 import re
-
 from daylength import daylength
 
-class raster_dataset:
-    
-    def __init__(self, filename):#, window=None):
-        #self.window = window
-        self.src = rasterio.open(filename)
-        self.src_coord = pyproj.Proj(self.src.crs)
-        self.lonlat = pyproj.Proj(init='epsg:4326')
-        self.data = self.src.read(1)#, window=self.window)
+@st.cache(allow_output_mutation=True)
+def load_data(model = 'rf'):
 
-    def get_gps (self, row, col):
-        east, north = self.src.xy(row,col) # image --> spatial coordinates
-        lon,lat = pyproj.transform(self.src_coord, self.lonlat, east, north)
-        value = self.data[row, col]
-        return lon, lat
-    
-    # input: longitude, latitude (gps coordinate)
-    # return: data value at input location(s)
-    def get_value (self, lon, lat):
-        east,north = pyproj.transform(self.lonlat, self.src_coord, lon, lat)
-    
-        # What is the corresponding row and column in our image?
-        row, col = self.src.index(east, north) # spatial --> image coordinates
-        #print(f'row,col=\t\t({row},{col})')
-    
-        # What is the value at that index?
-        value = self.data[row, col]
-        return value
-    
-    def get_rc (self, lon, lat):
-        east,north = pyproj.transform(self.lonlat, self.src_coord, lon, lat)
-        return self.src.index(east, north)
-    
-    def write_file (self, filename, data=None):
-        
-        if data is None:
-            data = self.data
-    
-        with rasterio.Env():
-        
-            # Write an array as a raster band to a new 8-bit file. For
-            # the new file's profile, we start with the profile of the source
-            profile = self.src.profile
-        
-            # And then change the band count to 1, set the
-            # dtype to uint8, and specify LZW compression.
-            profile.update(
-                dtype=rasterio.float32,
-                count=1,
-                compress='lzw')
-        
-            with rasterio.open(filename, 'w', **profile) as dst:
-                dst.write(data.astype(rasterio.float32), 1)
+    model = pickle.load(open('rfmodel_0616.sav','rb'))
+    #model = pickle.load(open('logmodel_0616.sav','rb'))
 
+    x_mean = np.load('x_mean_0616.npy')
+    x_std = np.load('x_std_0616.npy')
 
-#st.markdown(f"<style> div { background-image: url('Walker_canyon_wildflowers.jpg'); } </style>",unsafe_allow_html=True) 
-#st.markdown(f'<div style="background-image: url(\'Walker_canyon_wildflowers.jpg\');">',unsafe_allow_html=True)
+    return model, x_mean, x_std
+
+model, x_mean, x_std = load_data()
+
+parks = pd.read_pickle('data/parks_full.pkl')
+
+interaction = PolynomialFeatures(degree=2, include_bias=False, interaction_only=True)
+scale = lambda x: (x-x_mean)/x_std
+transform_input = lambda x: scale(interaction.fit_transform(x))
+
+# load the parks dataframe
+#parks = pd.read_pickle('data/parks_full.pkl')
+
+# load the model from disk
+#logmodel = pickle.load(open('logmodel_0608.sav', 'rb'))
 
 # App title and description
 app_title = 'Bloom Finder'
@@ -120,12 +87,6 @@ valid_location = False
 # make sure parsed place name contains only alphabetic charaters (or hyphen, apostrophe, space)
 valid_ascii = bool(re.match("^[A-Za-z-' ]*$", city))
 
-# load the parks dataframe
-parks = pd.read_pickle('parks_full.pkl')
-
-# load the model from disk
-logmodel = pickle.load(open('logmodel_0608.sav', 'rb'))
-
 # do geolocation only if location string is valid
 if (valid_ascii):
 
@@ -152,10 +113,6 @@ else:
 search_radius = st.number_input("How many miles are you willing to travel from your location?", min_value=0, value=100)
 valid_distance = search_radius>=0
 
-#print_city = city
-#if len(city):
-#    print_city += ', '
-
 if (valid_location):
     if (valid_distance):
         search_radius = float(search_radius)    
@@ -169,32 +126,8 @@ if (valid_date and valid_location and valid_distance):
 
     st.write("Awesome, here is our wildflower bloom prediction for parks near %s on %s!"%(print_city+ "California", visit_date))
 
-    #st.write('%lf'%lat)
-    #st.write('%lf'%lon)
-
     # display list of parks
     lp = Point((lat,lon))
-
-    #parks['Distance'] = parks[['Latitude','Longitude']].apply(lambda x: distance(Point((x.Latitude,x.Longitude)),lp).kilometers, axis=1)
-    #parks['Day_of_Year'] = visit_date.timetuple().tm_yday
-
-    #parks['daylength'] = parks.apply(lambda x: daylength(x.Day_of_Year,x.Latitude),axis=1)
-
-    ## lookup agdd
-    #parks['AGDD0_100'] = np.nan
-    #agdd_path = 'prism/daily/agdd0/%s/PRISM_agdd0_%s%02d%02d.tif'
-    #
-    ## read in aggd0 file
-    #agdd_data = raster_dataset(agdd_path % (visit_date.year,visit_date.year,visit_date.month,visit_date.day))
-    #parks['AGDD0_100'] = parks.apply(lambda x: agdd_data.get_value(x.Longitude,x.Latitude), axis=1)
-
-    ## lookup cum_ppt_100
-    #parks['cum_ppt_100'] = np.nan
-    #cum_ppt_100_path = 'prism/daily/cum_ppt_100/%s/PRISM_cum_ppt_100_%s%02d%02d.tif'
-    #
-    ## read in aggd0 file
-    #cum_ppt_100_data = raster_dataset(cum_ppt_100_path % (visit_date.year,visit_date.year,visit_date.month,visit_date.day))
-    #parks['cum_ppt_100'] = parks.apply(lambda x: cum_ppt_100_data.get_value(x.Longitude,x.Latitude), axis=1)
 
     parks_visit_date = parks[parks.Day_of_Year==visit_date.timetuple().tm_yday].copy(deep=True)
     parks_visit_date['Distance (miles)'] = parks_visit_date[['Latitude','Longitude']].apply(lambda x: distance(Point((x.Latitude,x.Longitude)),lp).miles, axis=1)
@@ -202,8 +135,8 @@ if (valid_date and valid_location and valid_distance):
     parks_visit_date = parks_visit_date[parks_visit_date['Distance (miles)']<search_radius]
     parks_visit_date.reset_index(inplace=True)
 
-    predictions = logmodel.predict(parks_visit_date[['elevation_srtm','daylength','AGDD0_100','cum_ppt_100']])
-    probs = logmodel.predict_proba(parks_visit_date[['elevation_srtm','daylength','AGDD0_100','cum_ppt_100']])
+    predictions = model.predict(transform_input(parks_visit_date[['elevation_srtm','daylength','AGDD0_100','cum_ppt_100']]))
+    probs = model.predict_proba(transform_input(parks_visit_date[['elevation_srtm','daylength','AGDD0_100','cum_ppt_100']]))
     probs = pd.DataFrame(probs,columns=['probability_%d'%n for n in range(2)])
 
     # reform test set to include predictions from model
@@ -212,7 +145,7 @@ if (valid_date and valid_location and valid_distance):
     for i,c in enumerate(probs.columns):
         parks_visit_date[c] = probs.values[:,i]
 
-    parks_visit_date['Bloom Score'] = (parks_visit_date.probability_1/0.52*100.).round(2)
+    parks_visit_date['Bloom Score'] = (parks_visit_date.probability_1/.5*100.).round(2)
 
     df_format = {'Distance (miles)':"{:.2f}", 'Bloom Score':"{:.2f}"}
 
@@ -290,5 +223,3 @@ if (valid_date and valid_location and valid_distance):
          #tooltip={"html": "<b>{Name}</b><br />Bloom Score: {Bloom Score}", "style": {"color": "white"}}
          tooltip={"html": "<b>{Name}</b>{subtext}", "style": {"color": "white"}}
          ))
-
-#st.markdown(f'</div>',unsafe_allow_html=True)
